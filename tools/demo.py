@@ -112,6 +112,8 @@ def parse_args():
 
 if __name__ == '__main__':
     cfg.TEST.HAS_RPN = True  # Use RPN for proposals
+    # REMOVE LINE BELOW IF WANT GPU
+    # cfg.USE_GPU_NMS =False
     args = parse_args()
 
     # model path

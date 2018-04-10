@@ -10,6 +10,8 @@ from __future__ import print_function
 
 import os
 from datasets.imdb import imdb
+import datasets
+import datasets.fudan
 import datasets.ds_utils as ds_utils
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -23,25 +25,18 @@ from .voc_eval import voc_eval
 from model.config import cfg
 
 
-class pascal_voc(imdb):
+class fudan(imdb):
   def __init__(self, image_set, year, use_diff=False):
-    name = 'voc_' + year + '_' + image_set
-    if use_diff:
-      name += '_diff'
-    imdb.__init__(self, name)
-    self._year = year
+    # name = 'FUDAN' + year + '_' + image_set
+    imdb.__init__(self, image_set)
+    # self._year = year
     self._image_set = image_set
     self._devkit_path = self._get_default_path()
-    self._data_path = os.path.join(self._devkit_path, 'VOC' + self._year)
+    self._data_path = os.path.join(self._devkit_path, 'data')
     self._classes = ('__background__',  # always index 0
                       'person')
-                     # 'aeroplane', 'bicycle', 'bird', 'boat',
-                     # 'bottle', 'bus', 'car', 'cat', 'chair',
-                     # 'cow', 'diningtable', 'dog', 'horse',
-                     # 'motorbike', 'person', 'pottedplant',
-                     # 'sheep', 'sofa', 'train', 'tvmonitor')
     self._class_to_ind = dict(list(zip(self.classes, list(range(self.num_classes)))))
-    self._image_ext = '.jpg'
+    self._image_ext = ['.jpg', '.png']
     self._image_index = self._load_image_set_index()
     # Default to roidb handler
     self._roidb_handler = self.gt_roidb
@@ -49,11 +44,14 @@ class pascal_voc(imdb):
     self._comp_id = 'comp4'
 
     # PASCAL specific config options
+    # TODO CHANGE CONFIGS
     self.config = {'cleanup': True,
                    'use_salt': True,
-                   'use_diff': use_diff,
-                   'matlab_eval': False,
-                   'rpn_file': None}
+                   # 'use_diff': use_diff,
+                   # 'matlab_eval': False,
+                   # 'rpn_file': None}
+                   'top_k'  : 2000
+                   }
 
     assert os.path.exists(self._devkit_path), \
       'VOCdevkit path does not exist: {}'.format(self._devkit_path)
@@ -70,8 +68,11 @@ class pascal_voc(imdb):
     """
     Construct an image path from the image's "index" identifier.
     """
-    image_path = os.path.join(self._data_path, 'JPEGImages',
-                              index + self._image_ext)
+    for ext in self._image_ext:
+        image_path = os.path.join(self._data_path, 'Images',
+                                  index + ext)
+        if os.path.exists(image_path):
+            break
     assert os.path.exists(image_path), \
       'Path does not exist: {}'.format(image_path)
     return image_path
@@ -81,8 +82,8 @@ class pascal_voc(imdb):
     Load the indexes listed in this dataset's image set file.
     """
     # Example path to image set file:
-    # self._devkit_path + /VOCdevkit2007/VOC2007/ImageSets/Main/val.txt
-    image_set_file = os.path.join(self._data_path, 'ImageSets', 'Main',
+    # self._data_path + /ImageSets/val.txt
+    image_set_file = os.path.join(self._data_path, 'ImageSets',
                                   self._image_set + '.txt')
     assert os.path.exists(image_set_file), \
       'Path does not exist: {}'.format(image_set_file)
@@ -94,7 +95,7 @@ class pascal_voc(imdb):
     """
     Return the default path where PASCAL VOC is expected to be installed.
     """
-    return os.path.join(cfg.DATA_DIR, 'VOCdevkit' + self._year)
+    return os.path.join(cfg.DATA_DIR, 'fudan')
 
   def gt_roidb(self):
     """
@@ -112,13 +113,97 @@ class pascal_voc(imdb):
       print('{} gt roidb loaded from {}'.format(self.name, cache_file))
       return roidb
 
-    gt_roidb = [self._load_pascal_annotation(index)
+    gt_roidb = [self._load_fudan_annotation(index)
                 for index in self.image_index]
     with open(cache_file, 'wb') as fid:
       pickle.dump(gt_roidb, fid, pickle.HIGHEST_PROTOCOL)
     print('wrote gt roidb to {}'.format(cache_file))
 
     return gt_roidb
+
+  def selective_search_roidb(self):
+        """
+        Return the database of selective search regions of interest.
+        Ground-truth ROIs are also included.
+
+        This function loads/saves from/to a cache file to speed up future calls.
+        """
+        cache_file = os.path.join(self.cache_path,
+                                  self.name + '_selective_search_roidb.pkl')
+
+        if os.path.exists(cache_file):
+            with open(cache_file, 'rb') as fid:
+                roidb = cPickle.load(fid)
+            print('{} ss roidb loaded from {}'.format(self.name, cache_file))
+            return roidb
+
+        if self._image_set != 'test':
+            gt_roidb = self.gt_roidb()
+            ss_roidb = self._load_selective_search_roidb(gt_roidb)
+            roidb = datasets.imdb.merge_roidbs(gt_roidb, ss_roidb)
+        else:
+            roidb = self._load_selective_search_roidb(None)
+            print(len(roidb))
+        with open(cache_file, 'wb') as fid:
+            cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
+        print('wrote ss roidb to {}'.format(cache_file))
+
+        return roidb
+
+  def _load_selective_search_roidb(self, gt_roidb):
+        filename = os.path.abspath(os.path.join(self._devkit_path,
+                                                self.name + '.mat'))
+        assert os.path.exists(filename), \
+               'Selective search data not found at: {}'.format(filename)
+        raw_data = sio.loadmat(filename)['all_boxes'].ravel()
+
+        box_list = []
+        for i in xrange(raw_data.shape[0]):
+            box_list.append(raw_data[i][:, (1, 0, 3, 2)] - 1)
+
+        return self.create_roidb_from_box_list(box_list, gt_roidb)
+
+  def selective_search_IJCV_roidb(self):
+        """
+        eturn the database of selective search regions of interest.
+        Ground-truth ROIs are also included.
+
+        This function loads/saves from/to a cache file to speed up future calls.
+        """
+        cache_file = os.path.join(self.cache_path,
+                '{:s}_selective_search_IJCV_top_{:d}_roidb.pkl'.
+                format(self.name, self.config['top_k']))
+
+        if os.path.exists(cache_file):
+            with open(cache_file, 'rb') as fid:
+                roidb = cPickle.load(fid)
+            print('{} ss roidb loaded from {}'.format(self.name, cache_file))
+            return roidb
+
+        gt_roidb = self.gt_roidb()
+        ss_roidb = self._load_selective_search_IJCV_roidb(gt_roidb)
+        roidb = datasets.imdb.merge_roidbs(gt_roidb, ss_roidb)
+        with open(cache_file, 'wb') as fid:
+            cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
+        print('wrote ss roidb to {}'.format(cache_file))
+
+        return roidb
+
+  def _load_selective_search_IJCV_roidb(self, gt_roidb):
+        IJCV_path = os.path.abspath(os.path.join(self.cache_path, '..',
+                                                 'selective_search_IJCV_data',
+                                                 self.name))
+        assert os.path.exists(IJCV_path), \
+               'Selective search IJCV data not found at: {}'.format(IJCV_path)
+
+        top_k = self.config['top_k']
+        box_list = []
+        for i in xrange(self.num_images):
+            filename = os.path.join(IJCV_path, self.image_index[i] + '.mat')
+            raw_data = sio.loadmat(filename)
+            box_list.append((raw_data['boxes'][:top_k, :]-1).astype(np.uint16))
+
+        return self.create_roidb_from_box_list(box_list, gt_roidb)
 
   def rpn_roidb(self):
     if int(self._year) == 2007 or self._image_set != 'test':
@@ -139,39 +224,49 @@ class pascal_voc(imdb):
       box_list = pickle.load(f)
     return self.create_roidb_from_box_list(box_list, gt_roidb)
 
-  def _load_simple_annotation(self, index):
+  def _load_fudan_annotation(self, index):
     """
     Load image and bounding boxes info from txt space separeted values where you have
     lines in the format of
     classification x1 y1 x2 y2
     """
+    import re
     filename = os.path.join(self._data_path, 'Annotations', index + '.txt')
     # print 'Loading: {}'.format(filename)
-    
     with open(filename) as f:
         lines = [l.split() for l in f if l]
-            
-    num_objs = len(lines)
+    # print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    # print(filename)
+    # print(lines)
+    # print(lines[0][0])
+    # print(type(lines[0]))
+    objs = re.findall("\[([^[\]]*)\]", lines[0][0])
+    # print(type(objs))
+    # print(objs)
+
+  
+    num_objs = len(objs)
 
     boxes = np.zeros((num_objs, 4), dtype=np.uint16)
     gt_classes = np.zeros((num_objs), dtype=np.int32)
     overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
     
     # "Seg" area here is just the box area
-    seg_areas = np.zeros((num_objs), dtype=np.float32)
+    # seg_areas = np.zeros((num_objs), dtype=np.float32)
     
     # Load object bounding boxes into a data frame.
-    for ix, line in enumerate(lines):
+    for ix, obj in enumerate(objs):
         # Make pixel indexes 0-based
-        x1 = float(line[1])
-        y1 = float(line[2])
-        x2 = float(line[3])
-        y2 = float(line[4])        
-        classification = int(line[0])
+        # print(obj)
+        coor = re.findall('\d+', obj)
+        x1 = float(coor[0])
+        y1 = float(coor[1])
+        x2 = float(coor[2])
+        y2 = float(coor[3])
+        cls = self._class_to_ind['person']
         boxes[ix, :] = [x1, y1, x2, y2]
-        gt_classes[ix] = classification
-        overlaps[ix, classification] = 1.0
-        eg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
+        gt_classes[ix] = cls
+        overlaps[ix, cls] = 1.0
 
     overlaps = scipy.sparse.csr_matrix(overlaps)
 
@@ -179,52 +274,6 @@ class pascal_voc(imdb):
             'gt_classes': gt_classes,
             'gt_overlaps' : overlaps,
             'flipped' : False}
-
-  def _load_pascal_annotation(self, index):
-    """
-    Load image and bounding boxes info from XML file in the PASCAL VOC
-    format.
-    """
-    filename = os.path.join(self._data_path, 'Annotations', index + '.xml')
-    tree = ET.parse(filename)
-    objs = tree.findall('object')
-    if not self.config['use_diff']:
-      # Exclude the samples labeled as difficult
-      non_diff_objs = [
-        obj for obj in objs if int(obj.find('difficult').text) == 0]
-      # if len(non_diff_objs) != len(objs):
-      #     print 'Removed {} difficult objects'.format(
-      #         len(objs) - len(non_diff_objs))
-      objs = non_diff_objs
-    num_objs = len(objs)
-
-    boxes = np.zeros((num_objs, 4), dtype=np.uint16)
-    gt_classes = np.zeros((num_objs), dtype=np.int32)
-    overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
-    # "Seg" area for pascal is just the box area
-    seg_areas = np.zeros((num_objs), dtype=np.float32)
-
-    # Load object bounding boxes into a data frame.
-    for ix, obj in enumerate(objs):
-      bbox = obj.find('bndbox')
-      # Make pixel indexes 0-based
-      x1 = float(bbox.find('xmin').text) - 1
-      y1 = float(bbox.find('ymin').text) - 1
-      x2 = float(bbox.find('xmax').text) - 1
-      y2 = float(bbox.find('ymax').text) - 1
-      cls = self._class_to_ind[obj.find('name').text.lower().strip()]
-      boxes[ix, :] = [x1, y1, x2, y2]
-      gt_classes[ix] = cls
-      overlaps[ix, cls] = 1.0
-      seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
-
-    overlaps = scipy.sparse.csr_matrix(overlaps)
-
-    return {'boxes': boxes,
-            'gt_classes': gt_classes,
-            'gt_overlaps': overlaps,
-            'flipped': False,
-            'seg_areas': seg_areas}
 
   def _get_comp_id(self):
     comp_id = (self._comp_id + '_' + self._salt if self.config['use_salt']
@@ -259,6 +308,20 @@ class pascal_voc(imdb):
                     format(index, dets[k, -1],
                            dets[k, 0] + 1, dets[k, 1] + 1,
                            dets[k, 2] + 1, dets[k, 3] + 1))
+
+  def _do_matlab_eval(self, comp_id, output_dir='output'):
+        rm_results = self.config['cleanup']
+
+        path = os.path.join(os.path.dirname(__file__),
+                            'VOCdevkit-matlab-wrapper')
+        cmd = 'cd {} && '.format(path)
+        cmd += '{:s} -nodisplay -nodesktop '.format(datasets.MATLAB)
+        cmd += '-r "dbstop if error; '
+        cmd += 'setenv(\'LC_ALL\',\'C\'); voc_eval(\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d}); quit;"' \
+               .format(self._devkit_path, comp_id,
+                       self._image_set, output_dir, int(rm_results))
+        print('Running:\n{}'.format(cmd))
+        status = subprocess.call(cmd, shell=True)
 
   def _do_python_eval(self, output_dir='output'):
     annopath = os.path.join(
@@ -322,6 +385,7 @@ class pascal_voc(imdb):
 
   def evaluate_detections(self, all_boxes, output_dir):
     self._write_voc_results_file(all_boxes)
+    # self._do_matlab_eval(output_dir)
     self._do_python_eval(output_dir)
     if self.config['matlab_eval']:
       self._do_matlab_eval(output_dir)
@@ -342,10 +406,12 @@ class pascal_voc(imdb):
 
 
 if __name__ == '__main__':
-  from datasets.pascal_voc import pascal_voc
+    from datasets.fudan import fudan
 
-  d = pascal_voc('trainval', '2007')
-  res = d.roidb
-  from IPython import embed;
+    d = fudan('trainval', '2007')
+    res = d.roidb
 
-  embed()
+
+    from IPython import embed;
+
+    embed()

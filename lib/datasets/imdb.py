@@ -113,8 +113,22 @@ class imdb(object):
       boxes = self.roidb[i]['boxes'].copy()
       oldx1 = boxes[:, 0].copy()
       oldx2 = boxes[:, 2].copy()
+      # if i == 226 or i == 227:
+      #   print(boxes[:])
+      #   print(widths[i])
+      #   print(oldx1)
+      #   print(oldx2)
+      #   print(widths[i] - oldx2 - 1)
+      #   print(widths[i] - oldx1 - 1)
+      #   print("@@@@@@@@@@@@@@@@@")
       boxes[:, 0] = widths[i] - oldx2 - 1
       boxes[:, 2] = widths[i] - oldx1 - 1
+      # NEED TO FIX THIS
+      # n > (2^16 - 1)
+      # n - (2^16 - 1)
+      for b in range(len(boxes)):
+        if boxes[b][2] < boxes[b][0]:
+          boxes[b][0]  = abs(boxes[b][0] - (pow(2,16) - 1))
       assert (boxes[:, 2] >= boxes[:, 0]).all()
       entry = {'boxes': boxes,
                'gt_overlaps': self.roidb[i]['gt_overlaps'],

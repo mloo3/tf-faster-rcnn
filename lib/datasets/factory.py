@@ -13,6 +13,7 @@ from __future__ import print_function
 __sets = {}
 from datasets.pascal_voc import pascal_voc
 from datasets.coco import coco
+from datasets.fudan import fudan
 
 import numpy as np
 
@@ -39,6 +40,11 @@ for year in ['2015']:
     name = 'coco_{}_{}'.format(year, split)
     __sets[name] = (lambda split=split, year=year: coco(split, year))
 
+# Set up fudan_<split> using selective search "fast" mode
+fudan_devkit_path = '/home/marcus/Desktop/tf-faster-rcnn/data/fudan'
+for split in ['train', 'test']:
+  name = '{}_{}'.format('fudan',split)
+  __sets[name] = (lambda split=split: fudan(split,fudan_devkit_path))
 
 def get_imdb(name):
   """Get an imdb (image database) by name."""

@@ -69,6 +69,9 @@ __C.TRAIN.MAX_SIZE = 1000
 __C.TRAIN.IMS_PER_BATCH = 1
 
 # Minibatch size (number of regions of interest [ROIs])
+# try gpu with 32
+#SOMETHING TO CHANGE
+# __C.TRAIN.BATCH_SIZE = 4
 __C.TRAIN.BATCH_SIZE = 128
 
 # Fraction of minibatch that is labeled foreground (i.e. class > 0)
@@ -268,6 +271,7 @@ __C.EXP_DIR = 'default'
 
 # Use GPU implementation of non-maximum suppression
 __C.USE_GPU_NMS = True
+# __C.USE_GPU_NMS = False
 
 # Default pooling mode, only 'crop' is available
 __C.POOLING_MODE = 'crop'
