@@ -7,7 +7,13 @@ lib/pycocotools
 lib/pycocotools/_mask.c
 lib/pycocotools/_mask.so
 .idea
-data
+data/fudan
+data/coco
+data/cache
+data/fudan
+data/imagenet_weights
+data/voc_2007_trainval+voc_2012_trainval
+data/VOCdevkit2007
 VOCdevkit
 MARCUS LOO
 error.txt
